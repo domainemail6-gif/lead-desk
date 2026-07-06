@@ -882,19 +882,22 @@ function openPanel(id){
     $("#p-log").innerHTML=l.log.map(x=>`<div class="logline"><time>${fmtDT(x.ts)}</time>${esc(x.text)}</div>`).join("");
     render();
   });
-  // every field saves the moment you change it
-  $("#panel").addEventListener("change",e=>{
-    const f=e.target.dataset.f; if(!f) return;
-    let v=e.target.value;
-    if(f==="stage" && v!==l.stage){ l.stageChangedAt=todayISO(); addLog(l,"Moved to "+v); }
-    if(f==="touches") v=Math.max(0,parseInt(v||"0",10));
-    if(f==="nextFollowUp" && !v){ v=addDays(todayISO(),DEFAULT_FOLLOWUP_DAYS); e.target.value=v;
-      toast("Follow-up can't be blank — set to "+fmtD(v)); }
-    l[f]=v; touchLead(l);
-    if(f==="name") $("#panel h2").textContent=l.name;
-    if(f==="stage") $("#p-log").innerHTML=l.log.map(x=>`<div class="logline"><time>${fmtDT(x.ts)}</time>${esc(x.text)}</div>`).join("");
-    persist(); scheduleSync(); render();
-  });
+}
+// Every field saves the moment you change it. This is attached ONCE (in wire)
+// and looks up which lead the panel is showing — attaching it per-open stacked
+// up listeners and wrote one edit onto every previously opened lead.
+function onPanelChange(e){
+  const f=e.target.dataset.f; if(!f) return;
+  const l=state.leads.find(x=>x.id===$("#panel").dataset.id); if(!l) return;
+  let v=e.target.value;
+  if(f==="stage" && v!==l.stage){ l.stageChangedAt=todayISO(); addLog(l,"Moved to "+v); }
+  if(f==="touches") v=Math.max(0,parseInt(v||"0",10));
+  if(f==="nextFollowUp" && !v){ v=addDays(todayISO(),DEFAULT_FOLLOWUP_DAYS); e.target.value=v;
+    toast("Follow-up can't be blank — set to "+fmtD(v)); }
+  l[f]=v; touchLead(l);
+  if(f==="name") $("#panel h2").textContent=l.name;
+  if(f==="stage") $("#p-log").innerHTML=l.log.map(x=>`<div class="logline"><time>${fmtDT(x.ts)}</time>${esc(x.text)}</div>`).join("");
+  persist(); scheduleSync(); render();
 }
 function closePanel(){ $("#panel").classList.remove("open"); $("#ovl").classList.remove("open"); }
 
@@ -1057,6 +1060,7 @@ function wire(){
   $("#add-btn").addEventListener("click",addLead);
   $("#add-input").addEventListener("keydown",e=>{ if(e.key==="Enter") addLead(); });
   $("#ovl").addEventListener("click",closePanel);
+  $("#panel").addEventListener("change",onPanelChange);
   document.addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); });
 
   // filters
