@@ -331,6 +331,9 @@ tbody tr:hover{ background:var(--bg3); }
     <select id="f-source"><option value="">All sources</option></select>
     <select id="f-market"><option value="">All micro-markets</option></select>
     <select id="f-ptype"><option value="">All property types</option></select>
+    <select id="f-project"><option value="">All projects</option></select>
+    <select id="f-cond"><option value="">Fresh &amp; resale</option></select>
+    <select id="f-purpose"><option value="">All purposes</option></select>
     <input class="search" id="f-search" placeholder="Search name / phone / notes">
     <button class="clear-f" id="f-clear" style="display:none">Clear filters</button>
   </div>
@@ -379,6 +382,8 @@ const MARKETS    = ["","Noida","Greater Noida","Yamuna Expressway","Gurgaon","Ot
 const PROP_TYPES = ["","Plot","Flat","Builder floor","Villa","Commercial"];
 const BHKS       = ["","1 BHK","2 BHK","3 BHK","4 BHK","5+ BHK"];
 const TIMELINES  = ["","Ready","3 months","6 months","Just exploring"];
+const CONDITIONS = ["","Fresh booking","Resale"];   // fresh vs resale vertical
+const PURPOSES   = ["","End-use","Investment — Capital appreciation","Investment — Rental income"];
 
 // The prefilled WhatsApp greeting. {name} becomes the lead's first name.
 const WHATSAPP_GREETING = "Hi {name}, Bhavik here from Real Estate with Bhavik. Just checking in — how are things looking on your property search?";
@@ -464,7 +469,7 @@ window.makePasscode = p => sha256(p).then(h=>{ console.log(h); return h; });
 let state = {
   leads: [],
   deleted: [],                       // ids removed locally, still to delete in cloud
-  filters: { temps:[], source:"", market:"", ptype:"", search:"" },
+  filters: { temps:[], source:"", market:"", ptype:"", project:"", cond:"", purpose:"", search:"" },
   view: null,
   sort: { key:"nextFollowUp", dir:1 },
 };
@@ -485,6 +490,7 @@ function newLead(name){
     stage:STAGES[0], tier:"—", nextAction:"", nextActionNote:"",
     firstContact:t, lastContact:t, nextFollowUp:addDays(t,DEFAULT_FOLLOWUP_DAYS),
     touches:0, budget:"", market:"", ptype:"", bhk:"", timeline:"",
+    project:"", condition:"", purpose:"",
     log:[{ts:Date.now(), text:"Lead created"}],
     example:false, stageChangedAt:t, updatedAt:Date.now() };
 }
@@ -501,6 +507,7 @@ function seed(){
     mk({ name:"Rohit Sharma", phone:"98100 11223", source:"Instagram DM", temp:"Hot",
       stage:"Visited", tier:"Full Advisory", nextAction:"Chase decision",
       budget:"1.5–2 Cr", market:"Yamuna Expressway", ptype:"Plot", timeline:"3 months",
+      project:"JP Sports City", condition:"Resale", purpose:"Investment — Capital appreciation",
       touches:6, firstContact:addDays(t,-32), lastContact:addDays(t,-6),
       nextFollowUp:addDays(t,-2), stageChangedAt:addDays(t,-18),
       log:[{ts:Date.now()-6*864e5,text:"Site visit done — liked sector 22D plots, wants corner facing"},
@@ -509,6 +516,7 @@ function seed(){
     mk({ name:"Priya Malhotra", phone:"99110 44556", source:"Referral", temp:"Warm",
       stage:"Proposal Sent", tier:"Research Package", nextAction:"Chase decision",
       budget:"1–1.2 Cr", market:"Noida", ptype:"Flat", bhk:"3 BHK", timeline:"6 months",
+      condition:"Resale", purpose:"End-use",
       touches:8, firstContact:addDays(t,-24), lastContact:addDays(t,-3),
       nextFollowUp:t, stageChangedAt:addDays(t,-5),
       log:[{ts:Date.now()-3*864e5,text:"Sent research package proposal on WhatsApp"},
@@ -528,6 +536,7 @@ function seed(){
     mk({ name:"Vikram Singh (NRI)", phone:"97030 55667", source:"Instagram comment", temp:"Hot",
       stage:"Qualified", tier:"NRI Package", nextAction:"Send Buyer's Report",
       budget:"1–1.5 Cr", market:"Yamuna Expressway", ptype:"Plot", timeline:"Ready",
+      project:"JP Sports City", condition:"Fresh booking", purpose:"Investment — Rental income",
       touches:3, firstContact:addDays(t,-9), lastContact:addDays(t,-5),
       nextFollowUp:addDays(t,-3), stageChangedAt:addDays(t,-7),
       log:[{ts:Date.now()-5*864e5,text:"Based in Dubai — wants investment plot near Jewar airport"}] }),
@@ -536,15 +545,18 @@ function seed(){
 
 /* ---------- filters ---------- */
 function filtersActive(){ const f=state.filters;
-  return f.temps.length||f.source||f.market||f.ptype||f.search; }
+  return f.temps.length||f.source||f.market||f.ptype||f.project||f.cond||f.purpose||f.search; }
 function matches(l){ const f=state.filters;
   if(f.temps.length && !f.temps.includes(l.temp)) return false;
   if(f.source && l.source!==f.source) return false;
   if(f.market && l.market!==f.market) return false;
   if(f.ptype  && l.ptype!==f.ptype)   return false;
+  if(f.project && l.project!==f.project)  return false;
+  if(f.cond    && l.condition!==f.cond)   return false;
+  if(f.purpose && l.purpose!==f.purpose)  return false;
   if(f.search){
     const q=f.search.toLowerCase();
-    const hay=[l.name,l.phone,l.budget,l.nextAction,l.nextActionNote,l.market,
+    const hay=[l.name,l.phone,l.budget,l.nextAction,l.nextActionNote,l.market,l.project,
       ...l.log.map(x=>x.text)].join(" ").toLowerCase();
     if(!hay.includes(q)) return false;
   }
@@ -557,6 +569,13 @@ function renderFilterBar(){
   $("#f-source").value=state.filters.source;
   $("#f-market").value=state.filters.market;
   $("#f-ptype").value=state.filters.ptype;
+  // the project dropdown is built from whatever project names your leads use
+  const cur=state.filters.project||"";
+  $("#f-project").innerHTML='<option value="">All projects</option>'+
+    [...new Set(state.leads.map(l=>l.project).filter(Boolean))].sort()
+    .map(n=>`<option${n===cur?" selected":""}>${esc(n)}</option>`).join("");
+  $("#f-cond").value=state.filters.cond||"";
+  $("#f-purpose").value=state.filters.purpose||"";
   if($("#f-search")!==document.activeElement) $("#f-search").value=state.filters.search;
   $("#f-clear").style.display=filtersActive()?"":"none";
 }
@@ -753,6 +772,8 @@ const COLS=[
   {k:"budget",t:"Budget",     g:l=>l.budget},
   {k:"market",t:"Micro-market",g:l=>l.market},
   {k:"ptype", t:"Type",       g:l=>l.ptype},
+  {k:"project",t:"Project",   g:l=>l.project||""},
+  {k:"purpose",t:"Purpose",   g:l=>l.purpose||""},
   {k:"touches",t:"Touches",   g:l=>l.touches},
   {k:"lastContact",t:"Last contact",g:l=>l.lastContact||""},
 ];
@@ -769,6 +790,7 @@ function renderTable(){
       <td>${esc(l.stage)}</td><td>${esc(l.source)}</td><td>${esc(l.phone)}</td>
       <td>${fmtD(l.nextFollowUp)}</td><td>${esc(l.nextAction)}</td>
       <td>${esc(l.budget)}</td><td>${esc(l.market)}</td><td>${esc(l.ptype)}</td>
+      <td>${esc(l.project)}</td><td>${esc(l.purpose)}</td>
       <td>${l.touches}</td><td>${fmtD(l.lastContact)}</td>
     </tr>`).join("")}</tbody></table></div>`;
   $$("#v-table th").forEach(th=>th.addEventListener("click",()=>{
@@ -817,6 +839,12 @@ function openPanel(id){
       ${sel(l,"ptype",PROP_TYPES,"Property type")}
       ${sel(l,"bhk",BHKS,"BHK")}
       ${sel(l,"timeline",TIMELINES,"Buying timeline")}
+      ${sel(l,"condition",CONDITIONS,"Fresh / Resale")}
+      ${sel(l,"purpose",PURPOSES,"Purpose")}
+      <div class="fld"><label>Project name</label>
+        <input type="text" data-f="project" value="${esc(l.project)}" list="projlist" placeholder="e.g. JP Sports City"></div>
+      <datalist id="projlist">${[...new Set(state.leads.map(x=>x.project).filter(Boolean))].sort()
+        .map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
     </div>
     <h4>Activity log</h4>
     <div class="logbox">
@@ -1028,12 +1056,16 @@ function wire(){
   const fill=(id,opts)=>{ const s=$(id);
     opts.filter(o=>o).forEach(o=>{ const e=document.createElement("option"); e.value=o; e.textContent=o; s.appendChild(e); }); };
   fill("#f-source",SOURCES); fill("#f-market",MARKETS); fill("#f-ptype",PROP_TYPES);
+  fill("#f-cond",CONDITIONS); fill("#f-purpose",PURPOSES);
   $("#f-source").addEventListener("change",e=>{ state.filters.source=e.target.value; persist(); render(); });
   $("#f-market").addEventListener("change",e=>{ state.filters.market=e.target.value; persist(); render(); });
   $("#f-ptype").addEventListener("change",e=>{ state.filters.ptype=e.target.value; persist(); render(); });
+  $("#f-project").addEventListener("change",e=>{ state.filters.project=e.target.value; persist(); render(); });
+  $("#f-cond").addEventListener("change",e=>{ state.filters.cond=e.target.value; persist(); render(); });
+  $("#f-purpose").addEventListener("change",e=>{ state.filters.purpose=e.target.value; persist(); render(); });
   $("#f-search").addEventListener("input",e=>{ state.filters.search=e.target.value; persist(); render(); });
   $("#f-clear").addEventListener("click",()=>{
-    state.filters={temps:[],source:"",market:"",ptype:"",search:""}; persist(); render(); });
+    state.filters={temps:[],source:"",market:"",ptype:"",project:"",cond:"",purpose:"",search:""}; persist(); render(); });
 
   // menu
   $("#menu-btn").addEventListener("click",e=>{ e.stopPropagation(); $("#menu").classList.toggle("open"); });
