@@ -99,6 +99,10 @@ nav button.on{ background:var(--bg3); color:var(--ink); }
 .filters select{ padding:5px 9px; font-size:13px; }
 .filters .search{ padding:5px 11px; font-size:13px; width:190px; }
 .clear-f{ font-size:13px; color:var(--amber); text-decoration:underline; }
+/* the collapsible row holding the six filter dropdowns */
+.f-more{ display:none; gap:8px; flex-wrap:wrap; align-items:center; }
+.f-more.open{ display:flex; }
+#f-toggle.active{ color:var(--gold); border-color:rgba(232,201,106,.5); }
 
 main{ padding:0 22px 90px; }
 
@@ -328,14 +332,17 @@ tbody tr:hover{ background:var(--bg3); }
     <button class="chip hot"  data-temp="Hot">Hot</button>
     <button class="chip warm" data-temp="Warm">Warm</button>
     <button class="chip cold" data-temp="Cold">Cold</button>
+    <button class="chip" id="f-toggle">Filters ▾</button>
+    <input class="search" id="f-search" placeholder="Search name / phone / notes">
+    <button class="clear-f" id="f-clear" style="display:none">Clear filters</button>
+  </div>
+  <div class="f-more" id="f-more">
     <select id="f-source"><option value="">All sources</option></select>
     <select id="f-market"><option value="">All micro-markets</option></select>
     <select id="f-ptype"><option value="">All property types</option></select>
     <select id="f-project"><option value="">All projects</option></select>
     <select id="f-cond"><option value="">Fresh &amp; resale</option></select>
     <select id="f-purpose"><option value="">All purposes</option></select>
-    <input class="search" id="f-search" placeholder="Search name / phone / notes">
-    <button class="clear-f" id="f-clear" style="display:none">Clear filters</button>
   </div>
 </div>
 
@@ -576,6 +583,11 @@ function renderFilterBar(){
     .map(n=>`<option${n===cur?" selected":""}>${esc(n)}</option>`).join("");
   $("#f-cond").value=state.filters.cond||"";
   $("#f-purpose").value=state.filters.purpose||"";
+  // show how many dropdown filters are active on the collapsed button
+  const f=state.filters;
+  const n=[f.source,f.market,f.ptype,f.project,f.cond,f.purpose].filter(Boolean).length;
+  $("#f-toggle").textContent = n ? `Filters · ${n} ▾` : "Filters ▾";
+  $("#f-toggle").classList.toggle("active",n>0);
   if($("#f-search")!==document.activeElement) $("#f-search").value=state.filters.search;
   $("#f-clear").style.display=filtersActive()?"":"none";
 }
@@ -1066,6 +1078,10 @@ function wire(){
   $("#f-search").addEventListener("input",e=>{ state.filters.search=e.target.value; persist(); render(); });
   $("#f-clear").addEventListener("click",()=>{
     state.filters={temps:[],source:"",market:"",ptype:"",project:"",cond:"",purpose:"",search:""}; persist(); render(); });
+  $("#f-toggle").addEventListener("click",()=>$("#f-more").classList.toggle("open"));
+  // if a dropdown filter was left on from last time, start with the row open
+  const sf=state.filters;
+  if([sf.source,sf.market,sf.ptype,sf.project,sf.cond,sf.purpose].some(Boolean)) $("#f-more").classList.add("open");
 
   // menu
   $("#menu-btn").addEventListener("click",e=>{ e.stopPropagation(); $("#menu").classList.toggle("open"); });
