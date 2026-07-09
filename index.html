@@ -212,8 +212,20 @@ table{ border-collapse:collapse; width:100%; font-size:13.5px; }
 th,td{ padding:8px 12px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
 th{ font-size:12px; color:var(--sage); text-transform:uppercase; letter-spacing:.6px; cursor:pointer; user-select:none; position:sticky; top:0; background:var(--bg2); }
 th:hover{ color:var(--ink); }
-tbody tr{ cursor:pointer; }
-tbody tr:hover{ background:var(--bg3); }
+tbody tr:hover{ background:rgba(0,0,0,.14); }
+/* spreadsheet-style cells: flat until you hover or click into them */
+.cellin{
+  background:transparent; border:1px solid transparent; border-radius:6px;
+  padding:3px 6px; font-size:13px; color:var(--ink); max-width:none;
+}
+.cellin:hover{ border-color:var(--line); }
+.cellin:focus{ background:rgba(0,0,0,.3); border-color:var(--gold); }
+select.cellin{ padding-right:2px; }
+.open-lead{
+  border:1px solid var(--line); border-radius:6px; color:var(--sage);
+  font-size:12px; padding:2px 8px;
+}
+.open-lead:hover{ background:var(--bg3); color:var(--ink); }
 
 /* ---------- side panel ---------- */
 .ovl{ position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:80; display:none; }
@@ -594,15 +606,18 @@ function renderFilterBar(){
 
 /* ---------- view switching ---------- */
 function setView(v){ state.view=v; persist(); render(); }
+// follow-ups badge = overdue + due today (unfiltered, so it never lies)
+function updateBadge(){
+  const due = state.leads.filter(l=>isActive(l)&&daysFromToday(l.nextFollowUp)<=0).length;
+  $("#fu-badge").style.display=due?"":"none"; $("#fu-badge").textContent=due;
+}
 function render(){
   renderFilterBar();
   $$("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.v===state.view));
   ["board","followups","pipeline","table"].forEach(v=>{
     $("#v-"+v).style.display = v===state.view ? "" : "none";
   });
-  // follow-ups badge = overdue + due today (unfiltered, so it never lies)
-  const due = state.leads.filter(l=>isActive(l)&&daysFromToday(l.nextFollowUp)<=0).length;
-  $("#fu-badge").style.display=due?"":"none"; $("#fu-badge").textContent=due;
+  updateBadge();
   ({board:renderBoard, followups:renderFU, pipeline:renderPipe, table:renderTable}[state.view])();
 }
 
@@ -785,6 +800,7 @@ const COLS=[
   {k:"market",t:"Micro-market",g:l=>l.market},
   {k:"ptype", t:"Type",       g:l=>l.ptype},
   {k:"project",t:"Project",   g:l=>l.project||""},
+  {k:"condition",t:"Fresh/Resale",g:l=>l.condition||""},
   {k:"purpose",t:"Purpose",   g:l=>l.purpose||""},
   {k:"touches",t:"Touches",   g:l=>l.touches},
   {k:"lastContact",t:"Last contact",g:l=>l.lastContact||""},
@@ -794,23 +810,38 @@ function renderTable(){
   const col=COLS.find(c=>c.k===key)||COLS[5];
   const rows=[...visible()].sort((a,b)=>{
     const x=col.g(a),y=col.g(b); return (x<y?-1:x>y?1:0)*dir; });
+  // every cell is editable in place, spreadsheet-style
+  const cIn=(l,f,type,w,extra="")=>`<input class="cellin" style="width:${w}px" type="${type}" ${extra} data-id="${l.id}" data-f="${f}" value="${esc(l[f]??"")}">`;
+  const cSel=(l,f,opts)=>`<select class="cellin" data-id="${l.id}" data-f="${f}">${opts.map(o=>
+    `<option value="${esc(o)}"${(l[f]||"")===o?" selected":""}>${o===""?"—":esc(o)}</option>`).join("")}</select>`;
+  const projNames=[...new Set(state.leads.map(x=>x.project).filter(Boolean))].sort();
   $("#v-table").innerHTML=`<div class="tblwrap"><table>
-    <thead><tr>${COLS.map(c=>`<th data-k="${c.k}">${c.t}${c.k===key?(dir>0?" ▲":" ▼"):""}</th>`).join("")}</tr></thead>
-    <tbody>${rows.map(l=>`<tr data-id="${l.id}">
-      <td>${esc(l.name)}${l.example?' <span class="extag">ex</span>':""}</td>
-      <td><span class="temp ${l.temp}">${l.temp}</span></td>
-      <td>${esc(l.stage)}</td><td>${esc(l.source)}</td><td>${esc(l.phone)}</td>
-      <td>${fmtD(l.nextFollowUp)}</td><td>${esc(l.nextAction)}</td>
-      <td>${esc(l.budget)}</td><td>${esc(l.market)}</td><td>${esc(l.ptype)}</td>
-      <td>${esc(l.project)}</td><td>${esc(l.purpose)}</td>
-      <td>${l.touches}</td><td>${fmtD(l.lastContact)}</td>
-    </tr>`).join("")}</tbody></table></div>`;
+    <thead><tr><th></th>${COLS.map(c=>`<th data-k="${c.k}">${c.t}${c.k===key?(dir>0?" ▲":" ▼"):""}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(l=>`<tr>
+      <td><button class="open-lead" data-id="${l.id}" title="Open full lead: notes, activity log, WhatsApp">▸</button></td>
+      <td>${cIn(l,"name","text",130)}</td>
+      <td>${cSel(l,"temp",TEMPS)}</td>
+      <td>${cSel(l,"stage",STAGES)}</td>
+      <td>${cSel(l,"source",SOURCES)}</td>
+      <td>${cIn(l,"phone","text",110)}</td>
+      <td>${cIn(l,"nextFollowUp","date",135)}</td>
+      <td>${cSel(l,"nextAction",NEXT_ACTIONS)}</td>
+      <td>${cIn(l,"budget","text",90)}</td>
+      <td>${cSel(l,"market",MARKETS)}</td>
+      <td>${cSel(l,"ptype",PROP_TYPES)}</td>
+      <td>${cIn(l,"project","text",120,'list="tbl-projlist"')}</td>
+      <td>${cSel(l,"condition",CONDITIONS)}</td>
+      <td>${cSel(l,"purpose",PURPOSES)}</td>
+      <td>${cIn(l,"touches","number",55)}</td>
+      <td>${cIn(l,"lastContact","date",135)}</td>
+    </tr>`).join("")}</tbody></table>
+    <datalist id="tbl-projlist">${projNames.map(n=>`<option value="${esc(n)}">`).join("")}</datalist></div>`;
   $$("#v-table th").forEach(th=>th.addEventListener("click",()=>{
+    if(!th.dataset.k) return;
     if(state.sort.key===th.dataset.k) state.sort.dir*=-1;
     else state.sort={key:th.dataset.k,dir:1};
     persist(); renderTable();
   }));
-  $$("#v-table tbody tr").forEach(tr=>tr.addEventListener("click",()=>openPanel(tr.dataset.id)));
 }
 
 /* ---------- SIDE PANEL ---------- */
@@ -883,21 +914,34 @@ function openPanel(id){
     render();
   });
 }
+// Applies one field edit to one lead — shared by the side panel and the
+// spreadsheet-style Table view so both behave identically.
+function applyEdit(l,f,el){
+  let v=el.value;
+  if(f==="stage" && v!==l.stage){ l.stageChangedAt=todayISO(); addLog(l,"Moved to "+v); }
+  if(f==="touches") v=Math.max(0,parseInt(v||"0",10));
+  if(f==="nextFollowUp" && !v){ v=addDays(todayISO(),DEFAULT_FOLLOWUP_DAYS); el.value=v;
+    toast("Follow-up can't be blank — set to "+fmtD(v)); }
+  l[f]=v; touchLead(l);
+}
 // Every field saves the moment you change it. This is attached ONCE (in wire)
 // and looks up which lead the panel is showing — attaching it per-open stacked
 // up listeners and wrote one edit onto every previously opened lead.
 function onPanelChange(e){
   const f=e.target.dataset.f; if(!f) return;
   const l=state.leads.find(x=>x.id===$("#panel").dataset.id); if(!l) return;
-  let v=e.target.value;
-  if(f==="stage" && v!==l.stage){ l.stageChangedAt=todayISO(); addLog(l,"Moved to "+v); }
-  if(f==="touches") v=Math.max(0,parseInt(v||"0",10));
-  if(f==="nextFollowUp" && !v){ v=addDays(todayISO(),DEFAULT_FOLLOWUP_DAYS); e.target.value=v;
-    toast("Follow-up can't be blank — set to "+fmtD(v)); }
-  l[f]=v; touchLead(l);
+  applyEdit(l,f,e.target);
   if(f==="name") $("#panel h2").textContent=l.name;
   if(f==="stage") $("#p-log").innerHTML=l.log.map(x=>`<div class="logline"><time>${fmtDT(x.ts)}</time>${esc(x.text)}</div>`).join("");
   persist(); scheduleSync(); render();
+}
+// Table-view cell edits: save + sync, but do NOT rebuild the grid — that
+// would steal focus while you're tabbing across cells like a spreadsheet.
+function onTableChange(e){
+  const f=e.target.dataset.f, id=e.target.dataset.id; if(!f||!id) return;
+  const l=state.leads.find(x=>x.id===id); if(!l) return;
+  applyEdit(l,f,e.target);
+  persist(); scheduleSync(); updateBadge();
 }
 function closePanel(){ $("#panel").classList.remove("open"); $("#ovl").classList.remove("open"); }
 
@@ -1061,6 +1105,10 @@ function wire(){
   $("#add-input").addEventListener("keydown",e=>{ if(e.key==="Enter") addLead(); });
   $("#ovl").addEventListener("click",closePanel);
   $("#panel").addEventListener("change",onPanelChange);
+  $("#v-table").addEventListener("change",onTableChange);
+  $("#v-table").addEventListener("click",e=>{
+    const b=e.target.closest(".open-lead"); if(b) openPanel(b.dataset.id);
+  });
   document.addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); });
 
   // filters
