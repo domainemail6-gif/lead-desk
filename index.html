@@ -255,6 +255,30 @@ select.cellin{ padding-right:2px; }
 .danger{ margin-top:30px; display:flex; gap:10px; }
 .danger button{ font-size:13px; color:var(--red); border:1px solid rgba(226,114,91,.4); border-radius:9px; padding:6px 13px; }
 
+/* ---------- paste import modal ---------- */
+.import-modal{
+  position:fixed; inset:0; z-index:150; background:rgba(0,0,0,.7);
+  display:none; align-items:center; justify-content:center; padding:20px;
+}
+.import-modal.open{ display:flex; }
+.import-box{
+  background:var(--bg2); border:1px solid var(--line); border-radius:16px;
+  padding:28px; max-width:700px; width:100%; max-height:85vh; overflow-y:auto;
+}
+.import-box h2{ margin-bottom:16px; }
+.import-box textarea{ width:100%; min-height:140px; font-size:13px; font-family:monospace; margin-bottom:14px; }
+.import-preview{
+  background:rgba(0,0,0,.2); border:1px solid var(--line); border-radius:12px;
+  padding:12px; margin:16px 0; font-size:12px; max-height:240px; overflow-y:auto;
+}
+.import-preview .row{ padding:4px 0; border-bottom:1px solid var(--line); }
+.import-preview .row:last-child{ border-bottom:none; }
+.import-preview strong{ color:var(--gold); }
+.import-btns{ display:flex; gap:10px; margin-top:20px; }
+.import-btns button{ padding:10px 18px; border-radius:9px; font-size:14px; flex:1; }
+.import-btns .yes{ background:var(--gold); color:#20301F; font-weight:600; border:none; }
+.import-btns .no{ border:1px solid var(--line); color:var(--ink); }
+
 /* ---------- login ---------- */
 .login{
   position:fixed; inset:0; z-index:200; background:var(--bg);
@@ -371,6 +395,21 @@ select.cellin{ padding-right:2px; }
 
 <div id="toast"></div>
 <input type="file" id="import-file" accept=".json" style="display:none">
+
+<!-- paste import modal -->
+<div class="import-modal" id="import-modal">
+  <div class="import-box">
+    <h2>Paste spreadsheet data</h2>
+    <p style="font-size:12.5px; color:var(--sage); margin-bottom:12px;">Paste rows from Excel, Google Sheets, or your spreadsheet. Column order doesn't matter — I'll auto-detect names, phones, projects, etc.</p>
+    <textarea id="import-paste" placeholder="Paste your data here (one row per line, columns separated by tabs)"></textarea>
+    <div id="import-preview" class="import-preview" style="display:none"></div>
+    <div id="import-err" style="color:var(--red); font-size:13px; min-height:18px;"></div>
+    <div class="import-btns">
+      <button class="no" id="import-cancel">Cancel</button>
+      <button class="yes" id="import-confirm" style="display:none">Import <span id="import-count">0</span> leads</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ==================================================================
@@ -1149,10 +1188,16 @@ function wire(){
     state.leads=state.leads.filter(l=>!l.example);
     save(); toast("Examples cleared");
   });
+  const mi = document.createElement("button"); mi.textContent="Paste spreadsheet"; mi.addEventListener("click",()=>$("#import-modal").classList.add("open")); $("#menu").insertBefore(mi, $("#m-signout"));
   $("#m-signout").addEventListener("click",()=>{
     if(supaOn()) signOut();
     else{ localStorage.removeItem(GATE_KEY); location.reload(); }  // lock the passcode gate
   });
+
+  // paste import modal
+  $("#import-paste").addEventListener("input",parseImport);
+  $("#import-cancel").addEventListener("click",()=>$("#import-modal").classList.remove("open"));
+  $("#import-confirm").addEventListener("click",doImport);
 
   window.addEventListener("online",()=>{ if(supaOn()&&session) pushRemote(); });
 }
@@ -1164,6 +1209,111 @@ function startApp(){
     setSync("","Local","Data lives in this browser only. Fill in the Supabase keys at the top of the file to sync across devices.");
   }
   render();
+}
+
+/* ==================================================================
+   PASTE IMPORT — turn messy spreadsheet rows into clean leads
+   ================================================================== */
+let importData = null;  // parsed rows ready to import
+
+function detectColumns(rows){
+  // first row is usually headers — try to guess column positions
+  const h = (rows[0]||"").toLowerCase();
+  const cols = {};
+  const aliases = {
+    name:      ["name","contact name","lead name"],
+    phone:     ["phone","contact","mobile","whatsapp","number"],
+    project:   ["project","property","project name"],
+    source:    ["source","channel","origin"],
+    stage:     ["stage","status","current status"],
+    temp:      ["temp","temperature","priority","heat"],
+    tier:      ["tier","service","package","interested"],
+    notes:     ["notes","conversation","comment","last conversation"],
+  };
+  Object.entries(aliases).forEach(([f,alts])=>{
+    alts.forEach(a=>{ if(h.includes(a)) cols[f]=true; });
+  });
+  return cols;
+}
+
+function parseImport(){
+  const txt = $("#import-paste").value.trim(); if(!txt) return;
+  const lines = txt.split("\n").map(l=>l.trim()).filter(Boolean);
+  if(lines.length<2){ $("#import-err").textContent="Need at least 2 rows (headers + data)"; return; }
+
+  const cols = detectColumns(lines);
+  const header = lines[0].split("\t").map(c=>c.trim().toLowerCase());
+  const data = lines.slice(1).map(l=>{
+    const vals=l.split("\t").map(v=>v.trim());
+    const row={};
+    header.forEach((h,i)=>{ row[h]=vals[i]||""; });
+    return row;
+  }).filter(r=>r.name || r.contact || r.phone || r.mobile);  // skip fully blank rows
+
+  // map to lead fields
+  const leads = data.map(row=>{
+    const find=(aliases)=>{ for(const a of aliases) for(const [k,v] of Object.entries(row)) if(k.toLowerCase().includes(a)) return v; return ""; };
+    const name = find(["name","contact"]);
+    if(!name) return null;  // skip if no name found
+
+    let phone = find(["phone","mobile","whatsapp","contact"]).replace(/[^\d+]/g,"").slice(-10);
+    let source = find(["source","channel"]) || "Other";
+    let proj = find(["project","property"]);
+    let stage = find(["stage","status"]) || "New";
+    let temp = find(["temp","heat","priority"]).toLowerCase().includes("hot")?"Hot":
+               find(["temp","heat","priority"]).toLowerCase().includes("cold")?"Cold":"Warm";
+    let tier = find(["tier","service","package","interested"]) || "—";
+    let notes = find(["notes","conversation","comment"]);
+
+    // normalize stage to our known stages
+    const stageMap = {
+      "new":"New","contacted":"Contacted","engaging":"Engaging",
+      "visited":"Visited","proposal":"Proposal Sent","won":"Closed Won","lost":"Lost"
+    };
+    const st = stage.toLowerCase();
+    stage = Object.entries(stageMap).find(([k])=>st.includes(k))?.[1] || STAGES.find(s=>s.toLowerCase()===st) || "New";
+
+    // normalize tier to our options
+    if(!TIERS.includes(tier)) tier="—";
+
+    return {
+      name, phone, source, stage, temp, project:proj, tier,
+      notes, firstContact:todayISO(), nextFollowUp:addDays(todayISO(),2)
+    };
+  }).filter(Boolean);
+
+  if(!leads.length){ $("#import-err").textContent="No valid leads found (need Name column)"; return; }
+
+  // show preview
+  const existing = state.leads.map(l=>l.phone).filter(Boolean);
+  const newLeads = leads.filter(l=>!existing.includes(l.phone));
+  const dupes = leads.length - newLeads.length;
+
+  $("#import-preview").innerHTML = newLeads.slice(0,15).map(l=>`<div class="row">
+    <strong>${esc(l.name)}</strong> · ${l.phone||"no phone"} · ${l.project||"—"} · ${l.temp}</div>`).join("")
+    + (newLeads.length>15?`<div class="row" style="color:var(--sage)">… and ${newLeads.length-15} more</div>`:"");
+  $("#import-preview").style.display="";
+  $("#import-err").textContent = dupes?`(${dupes} already in your CRM by phone number)`:"";;
+  $("#import-count").textContent = newLeads.length;
+  $("#import-confirm").style.display = newLeads.length ? "" : "none";
+  importData = newLeads;
+}
+
+function doImport(){
+  if(!importData||!importData.length) return;
+  importData.forEach(row=>{
+    const l = newLead(row.name);
+    l.phone=row.phone; l.source=row.source; l.stage=row.stage; l.temp=row.temp;
+    l.project=row.project; l.tier=row.tier;
+    if(row.notes) addLog(l, row.notes);
+    l.firstContact=row.firstContact; l.nextFollowUp=row.nextFollowUp;
+    state.leads.unshift(l);
+  });
+  save();
+  toast(`Imported ${importData.length} leads`);
+  $("#import-modal").classList.remove("open");
+  importData=null;
+  $("#import-paste").value="";
 }
 
 /* ---------- boot ---------- */
